@@ -386,13 +386,20 @@ def sync_news_articles(pg_conn, neo4j_driver):
         total_rows = cur.fetchone()[0]
         print(f"Found {total_rows} records to sync")
         
-        # Process in larger batches
-        batch_size = 1000  # Increased from 100 to 1000
+        # Process in smaller batches for memory efficiency
+        batch_size = 50  # Reduced from 1000 to 50
         processed = 0
         
         while processed < total_rows:
             cur.execute(
-                "SELECT * FROM news_articles ORDER BY id LIMIT %s OFFSET %s;",
+                """
+                SELECT id, title, summary, full_content, date_posted, url, 
+                       sentiment, city_seo, state_seo, topic_1, topic_2, 
+                       topic_3, main_topic, topic_keywords, entity_person
+                FROM news_articles 
+                ORDER BY id 
+                LIMIT %s OFFSET %s;
+                """,
                 (batch_size, processed)
             )
             rows = cur.fetchall()
@@ -401,14 +408,20 @@ def sync_news_articles(pg_conn, neo4j_driver):
             # Process records in Neo4j batch
             with neo4j_driver.session() as session:
                 for row in rows:
-                    data = dict(zip(colnames, row))
-                    session.execute_write(upsert_news_article, data)
-                    processed += 1
-                    if processed % 100 == 0:  # Show progress every 100 records
-                        print(f"Progress: {processed}/{total_rows} records processed ({(processed/total_rows*100):.1f}%)")
+                    try:
+                        data = dict(zip(colnames, row))
+                        session.execute_write(upsert_news_article, data)
+                        processed += 1
+                        if processed % 10 == 0:  # Show progress more frequently
+                            print(f"Progress: {processed}/{total_rows} records processed ({(processed/total_rows*100):.1f}%)")
+                    except Exception as e:
+                        print(f"Error processing record {data.get('id')}: {str(e)}")
+                        continue
             
-            # Show batch completion
+            # Show batch completion and force garbage collection
             print(f"Completed batch: {processed}/{total_rows} records")
+            import gc
+            gc.collect()
     
     print("✓ Completed syncing news_articles")
 
@@ -420,8 +433,8 @@ def sync_articles_table(pg_conn, neo4j_driver):
         total_rows = cur.fetchone()[0]
         print(f"Found {total_rows} records to sync")
         
-        # Process in larger batches
-        batch_size = 1000  # Increased from 100 to 1000
+        # Process in smaller batches
+        batch_size = 50  # Reduced from 1000 to 50
         processed = 0
         
         while processed < total_rows:
@@ -435,14 +448,20 @@ def sync_articles_table(pg_conn, neo4j_driver):
             # Process records in Neo4j batch
             with neo4j_driver.session() as session:
                 for row in rows:
-                    data = dict(zip(colnames, row))
-                    session.execute_write(upsert_articles_table, data)
-                    processed += 1
-                    if processed % 100 == 0:  # Show progress every 100 records
-                        print(f"Progress: {processed}/{total_rows} records processed ({(processed/total_rows*100):.1f}%)")
+                    try:
+                        data = dict(zip(colnames, row))
+                        session.execute_write(upsert_articles_table, data)
+                        processed += 1
+                        if processed % 10 == 0:  # Show progress more frequently
+                            print(f"Progress: {processed}/{total_rows} records processed ({(processed/total_rows*100):.1f}%)")
+                    except Exception as e:
+                        print(f"Error processing record {data.get('id')}: {str(e)}")
+                        continue
             
-            # Show batch completion
+            # Show batch completion and force garbage collection
             print(f"Completed batch: {processed}/{total_rows} records")
+            import gc
+            gc.collect()
     
     print("✓ Completed syncing articles")
 
