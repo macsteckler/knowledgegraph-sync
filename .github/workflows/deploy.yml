@@ -1,0 +1,35 @@
+name: Deploy to Lightsail
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Install SSH key
+        uses: shimataro/ssh-key-action@v2
+        with:
+          key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
+          known_hosts: unnecessary
+          if_key_exists: replace
+
+      - name: Adding Known Hosts
+        run: ssh-keyscan -H 34.219.195.94 >> ~/.ssh/known_hosts
+
+      - name: Deploy to Lightsail
+        run: |
+          ssh ec2-user@34.219.195.94 'mkdir -p ~/knowledgegraph'
+          rsync -av --exclude '.git' \
+                    --exclude '.github' \
+                    --exclude 'venv' \
+                    --exclude '__pycache__' \
+                    --exclude '*.pyc' \
+                    ./ ec2-user@34.219.195.94:~/knowledgegraph/
+          
+          ssh ec2-user@34.219.195.94 'cd ~/knowledgegraph && chmod +x deploy_lightsail.sh && ./deploy_lightsail.sh' 
