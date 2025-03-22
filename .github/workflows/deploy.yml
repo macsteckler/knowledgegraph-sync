@@ -23,24 +23,24 @@ jobs:
           echo "Current IP address:"
           curl -s ifconfig.me
           echo -e "\nTesting DNS resolution:"
-          nslookup 34.219.195.94
+          nslookup 54.218.163.9
           echo -e "\nTesting basic connectivity:"
-          ping -c 4 34.219.195.94 || true
+          ping -c 4 54.218.163.9 || true
           echo -e "\nChecking route:"
-          traceroute 34.219.195.94 || true
+          traceroute 54.218.163.9 || true
           echo -e "\nChecking SSH port:"
-          nc -zv 34.219.195.94 22 -w 5 || true
+          nc -zv 54.218.163.9 22 -w 5 || true
           echo -e "\nSSH verbose test:"
-          ssh -v -i ~/.ssh/lightsail.pem -o StrictHostKeyChecking=no ec2-user@34.219.195.94 'echo test' || true
+          ssh -v -i ~/.ssh/lightsail.pem -o StrictHostKeyChecking=no ec2-user@54.218.163.9 'echo test' || true
 
       - name: Deploy to Lightsail
         run: |
           # Try direct SSH first
-          if ssh -i ~/.ssh/lightsail.pem -o StrictHostKeyChecking=no ec2-user@34.219.195.94 'echo "SSH connection successful"'; then
+          if ssh -i ~/.ssh/lightsail.pem -o StrictHostKeyChecking=no ec2-user@54.218.163.9 'echo "SSH connection successful"'; then
             echo "SSH connection successful, proceeding with deployment..."
             
             # Create directory
-            ssh -i ~/.ssh/lightsail.pem -o StrictHostKeyChecking=no ec2-user@34.219.195.94 'mkdir -p ~/knowledgegraph'
+            ssh -i ~/.ssh/lightsail.pem -o StrictHostKeyChecking=no ec2-user@54.218.163.9 'mkdir -p ~/knowledgegraph'
             
             # Sync files
             rsync -e "ssh -i ~/.ssh/lightsail.pem -o StrictHostKeyChecking=no" -av \
@@ -49,10 +49,10 @@ jobs:
                   --exclude 'venv' \
                   --exclude '__pycache__' \
                   --exclude '*.pyc' \
-                  ./ ec2-user@34.219.195.94:~/knowledgegraph/
+                  ./ ec2-user@54.218.163.9:~/knowledgegraph/
             
             # Execute deployment scripts
-            ssh -i ~/.ssh/lightsail.pem -o StrictHostKeyChecking=no ec2-user@34.219.195.94 'cd ~/knowledgegraph && \
+            ssh -i ~/.ssh/lightsail.pem -o StrictHostKeyChecking=no ec2-user@54.218.163.9 'cd ~/knowledgegraph && \
                       chmod +x deploy_lightsail.sh && \
                       chmod +x run_daily_sync.sh && \
                       chmod +x setup_cron.sh && \
