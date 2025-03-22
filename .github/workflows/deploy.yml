@@ -19,33 +19,55 @@ jobs:
           known_hosts: unnecessary
           if_key_exists: replace
 
-      - name: Setup SSH and Known Hosts
+      - name: Debug Connection
+        run: |
+          echo "Current IP address:"
+          curl -s ifconfig.me
+          echo -e "\nTesting DNS resolution:"
+          nslookup 34.219.195.94
+          echo -e "\nTesting basic connectivity:"
+          ping -c 4 34.219.195.94
+          echo -e "\nChecking SSH port:"
+          nc -zv 34.219.195.94 22 -w 5
+
+      - name: Setup SSH Config
         run: |
           mkdir -p ~/.ssh
-          ssh-keyscan -H 34.219.195.94 > ~/.ssh/known_hosts 2>/dev/null || true
-          chmod 600 ~/.ssh/known_hosts
-          # Add a more permissive SSH config for initial connection
-          echo -e "Host 34.219.195.94\n\tStrictHostKeyChecking no\n\tUserKnownHostsFile=/dev/null" > ~/.ssh/config
+          echo -e "Host lightsail\n\
+            HostName 34.219.195.94\n\
+            User ec2-user\n\
+            StrictHostKeyChecking no\n\
+            UserKnownHostsFile=/dev/null\n\
+            IdentityFile ~/.ssh/id_rsa\n\
+            ServerAliveInterval 60" > ~/.ssh/config
           chmod 600 ~/.ssh/config
 
       - name: Deploy to Lightsail
         run: |
-          # Test SSH connection first
-          ssh -o "StrictHostKeyChecking=no" ec2-user@34.219.195.94 'echo "SSH connection successful"'
+          # Test connection with verbose output
+          ssh -v lightsail 'echo "SSH connection successful"' || echo "SSH connection failed with exit code $?"
           
-          # Proceed with deployment
-          ssh ec2-user@34.219.195.94 'mkdir -p ~/knowledgegraph'
-          rsync -av --exclude '.git' \
-                    --exclude '.github' \
-                    --exclude 'venv' \
-                    --exclude '__pycache__' \
-                    --exclude '*.pyc' \
-                    ./ ec2-user@34.219.195.94:~/knowledgegraph/
-          
-          # Make scripts executable and run deployment
-          ssh ec2-user@34.219.195.94 'cd ~/knowledgegraph && \
-                                     chmod +x deploy_lightsail.sh && \
-                                     chmod +x run_daily_sync.sh && \
-                                     chmod +x setup_cron.sh && \
-                                     ./deploy_lightsail.sh && \
-                                     ./setup_cron.sh' 
+          # Proceed with deployment if test succeeds
+          if ssh lightsail 'echo "SSH connection successful"'; then
+            echo "SSH connection successful, proceeding with deployment..."
+            
+            # Create directory and sync files
+            ssh lightsail 'mkdir -p ~/knowledgegraph'
+            rsync -av --exclude '.git' \
+                      --exclude '.github' \
+                      --exclude 'venv' \
+                      --exclude '__pycache__' \
+                      --exclude '*.pyc' \
+                      ./ lightsail:~/knowledgegraph/
+            
+            # Execute deployment scripts
+            ssh lightsail 'cd ~/knowledgegraph && \
+                          chmod +x deploy_lightsail.sh && \
+                          chmod +x run_daily_sync.sh && \
+                          chmod +x setup_cron.sh && \
+                          ./deploy_lightsail.sh && \
+                          ./setup_cron.sh'
+          else
+            echo "SSH connection test failed, cannot proceed with deployment"
+            exit 1
+          fi 
