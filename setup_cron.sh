@@ -1,21 +1,25 @@
 #!/bin/bash
 
-# Create log directory
-mkdir -p ~/knowledgegraph/logs
+# Get the absolute path of the run_daily_sync.sh script
+SCRIPT_PATH="$HOME/knowledgegraph/run_daily_sync.sh"
 
-# Create the cron job script
-cat > ~/knowledgegraph/run_daily_sync.sh << 'EOL'
-#!/bin/bash
-cd ~/knowledgegraph
-source venv/bin/activate
-python3 sync_daily_updates.py >> logs/daily_sync_$(date +\%Y\%m\%d).log 2>&1
-EOL
+# Create a temporary file
+TEMP_CRON=$(mktemp)
 
-# Make the script executable
-chmod +x ~/knowledgegraph/run_daily_sync.sh
+# Export existing crontab
+crontab -l > "$TEMP_CRON" 2>/dev/null
 
-# Add cron job to run at 2 AM daily
-(crontab -l 2>/dev/null; echo "0 2 * * * ~/knowledgegraph/run_daily_sync.sh") | crontab -
+# Check if the job already exists
+if ! grep -q "$SCRIPT_PATH" "$TEMP_CRON"; then
+    # Add the new cron job - runs at 2 AM every day
+    echo "0 2 * * * $SCRIPT_PATH" >> "$TEMP_CRON"
+    
+    # Install the new cron file
+    crontab "$TEMP_CRON"
+    echo "Cron job installed successfully!"
+else
+    echo "Cron job already exists!"
+fi
 
-echo "Cron job has been set up to run daily at 2 AM"
-echo "Logs will be stored in ~/knowledgegraph/logs/" 
+# Clean up
+rm "$TEMP_CRON" 

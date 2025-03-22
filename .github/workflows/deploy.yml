@@ -32,4 +32,10 @@ jobs:
                     --exclude '*.pyc' \
                     ./ ec2-user@34.219.195.94:~/knowledgegraph/
           
-          ssh ec2-user@34.219.195.94 'cd ~/knowledgegraph && chmod +x deploy_lightsail.sh && ./deploy_lightsail.sh' 
+          # Make scripts executable and run deployment
+          ssh ec2-user@34.219.195.94 'cd ~/knowledgegraph && \
+                                     chmod +x deploy_lightsail.sh && \
+                                     chmod +x run_daily_sync.sh && \
+                                     chmod +x setup_cron.sh && \
+                                     ./deploy_lightsail.sh && \
+                                     ./setup_cron.sh' 
