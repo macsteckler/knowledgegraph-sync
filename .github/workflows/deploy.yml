@@ -13,60 +13,51 @@ jobs:
       - uses: actions/checkout@v2
 
       - name: Install SSH key
-        uses: shimataro/ssh-key-action@v2
-        with:
-          key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
-          known_hosts: unnecessary
-          if_key_exists: replace
-
-      - name: Debug Connection
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.LIGHTSAIL_SSH_KEY }}" > ~/.ssh/lightsail.pem
+          chmod 600 ~/.ssh/lightsail.pem
+          
+      - name: Debug Connection Info
         run: |
           echo "Current IP address:"
           curl -s ifconfig.me
           echo -e "\nTesting DNS resolution:"
           nslookup 34.219.195.94
           echo -e "\nTesting basic connectivity:"
-          ping -c 4 34.219.195.94
+          ping -c 4 34.219.195.94 || true
+          echo -e "\nChecking route:"
+          traceroute 34.219.195.94 || true
           echo -e "\nChecking SSH port:"
-          nc -zv 34.219.195.94 22 -w 5
-
-      - name: Setup SSH Config
-        run: |
-          mkdir -p ~/.ssh
-          echo -e "Host lightsail\n\
-            HostName 34.219.195.94\n\
-            User ec2-user\n\
-            StrictHostKeyChecking no\n\
-            UserKnownHostsFile=/dev/null\n\
-            IdentityFile ~/.ssh/id_rsa\n\
-            ServerAliveInterval 60" > ~/.ssh/config
-          chmod 600 ~/.ssh/config
+          nc -zv 34.219.195.94 22 -w 5 || true
+          echo -e "\nSSH verbose test:"
+          ssh -v -i ~/.ssh/lightsail.pem -o StrictHostKeyChecking=no ec2-user@34.219.195.94 'echo test' || true
 
       - name: Deploy to Lightsail
         run: |
-          # Test connection with verbose output
-          ssh -v lightsail 'echo "SSH connection successful"' || echo "SSH connection failed with exit code $?"
-          
-          # Proceed with deployment if test succeeds
-          if ssh lightsail 'echo "SSH connection successful"'; then
+          # Try direct SSH first
+          if ssh -i ~/.ssh/lightsail.pem -o StrictHostKeyChecking=no ec2-user@34.219.195.94 'echo "SSH connection successful"'; then
             echo "SSH connection successful, proceeding with deployment..."
             
-            # Create directory and sync files
-            ssh lightsail 'mkdir -p ~/knowledgegraph'
-            rsync -av --exclude '.git' \
-                      --exclude '.github' \
-                      --exclude 'venv' \
-                      --exclude '__pycache__' \
-                      --exclude '*.pyc' \
-                      ./ lightsail:~/knowledgegraph/
+            # Create directory
+            ssh -i ~/.ssh/lightsail.pem -o StrictHostKeyChecking=no ec2-user@34.219.195.94 'mkdir -p ~/knowledgegraph'
+            
+            # Sync files
+            rsync -e "ssh -i ~/.ssh/lightsail.pem -o StrictHostKeyChecking=no" -av \
+                  --exclude '.git' \
+                  --exclude '.github' \
+                  --exclude 'venv' \
+                  --exclude '__pycache__' \
+                  --exclude '*.pyc' \
+                  ./ ec2-user@34.219.195.94:~/knowledgegraph/
             
             # Execute deployment scripts
-            ssh lightsail 'cd ~/knowledgegraph && \
-                          chmod +x deploy_lightsail.sh && \
-                          chmod +x run_daily_sync.sh && \
-                          chmod +x setup_cron.sh && \
-                          ./deploy_lightsail.sh && \
-                          ./setup_cron.sh'
+            ssh -i ~/.ssh/lightsail.pem -o StrictHostKeyChecking=no ec2-user@34.219.195.94 'cd ~/knowledgegraph && \
+                      chmod +x deploy_lightsail.sh && \
+                      chmod +x run_daily_sync.sh && \
+                      chmod +x setup_cron.sh && \
+                      ./deploy_lightsail.sh && \
+                      ./setup_cron.sh'
           else
             echo "SSH connection test failed, cannot proceed with deployment"
             exit 1
