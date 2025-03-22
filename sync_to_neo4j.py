@@ -378,50 +378,67 @@ def upsert_council_insight(tx, row):
 #               MAIN SYNC FUNCTIONS                #
 ###################################################
 
+def get_last_processed_id(table_name):
+    """Get the last processed ID from a checkpoint file."""
+    try:
+        with open(f'{table_name}_checkpoint.txt', 'r') as f:
+            return int(f.read().strip())
+    except:
+        return 0
+
+def save_checkpoint(table_name, last_id):
+    """Save the last processed ID to a checkpoint file."""
+    with open(f'{table_name}_checkpoint.txt', 'w') as f:
+        f.write(str(last_id))
+
 def sync_news_articles(pg_conn, neo4j_driver):
     """Fetch rows from news_articles, upsert into Neo4j."""
     with pg_conn.cursor() as cur:
         print("\nSyncing news_articles table...")
         cur.execute("SELECT COUNT(*) FROM news_articles;")
         total_rows = cur.fetchone()[0]
-        print(f"Found {total_rows} records to sync")
         
-        # Process in smaller batches for memory efficiency
+        # Get last processed ID
+        last_id = get_last_processed_id('news_articles')
+        if last_id > 0:
+            print(f"Resuming from ID: {last_id}")
+        
+        print(f"Found {total_rows} total records")
+        
+        # Process in smaller batches
         batch_size = 50  # Reduced from 1000 to 50
         processed = 0
         
-        while processed < total_rows:
+        while True:
             cur.execute(
                 """
-                SELECT id, title, summary, full_content, date_posted, url, 
-                       sentiment, city_seo, state_seo, topic_1, topic_2, 
-                       topic_3, main_topic, topic_keywords, entity_person
-                FROM news_articles 
+                SELECT * FROM news_articles 
+                WHERE id > %s 
                 ORDER BY id 
-                LIMIT %s OFFSET %s;
+                LIMIT %s;
                 """,
-                (batch_size, processed)
+                (last_id, batch_size)
             )
             rows = cur.fetchall()
+            if not rows:
+                break
+                
             colnames = [desc[0] for desc in cur.description]
 
             # Process records in Neo4j batch
             with neo4j_driver.session() as session:
                 for row in rows:
-                    try:
-                        data = dict(zip(colnames, row))
-                        session.execute_write(upsert_news_article, data)
-                        processed += 1
-                        if processed % 10 == 0:  # Show progress more frequently
-                            print(f"Progress: {processed}/{total_rows} records processed ({(processed/total_rows*100):.1f}%)")
-                    except Exception as e:
-                        print(f"Error processing record {data.get('id')}: {str(e)}")
-                        continue
+                    data = dict(zip(colnames, row))
+                    session.execute_write(upsert_news_article, data)
+                    last_id = data['id']
+                    processed += 1
+                    if processed % 10 == 0:  # Show progress more frequently
+                        print(f"Progress: {processed} records processed. Current ID: {last_id}")
+                        save_checkpoint('news_articles', last_id)
             
-            # Show batch completion and force garbage collection
-            print(f"Completed batch: {processed}/{total_rows} records")
-            import gc
-            gc.collect()
+            # Show batch completion and save checkpoint
+            print(f"Completed batch. Last ID: {last_id}")
+            save_checkpoint('news_articles', last_id)
     
     print("✓ Completed syncing news_articles")
 
@@ -431,37 +448,48 @@ def sync_articles_table(pg_conn, neo4j_driver):
         print("\nSyncing articles table...")
         cur.execute("SELECT COUNT(*) FROM articles;")
         total_rows = cur.fetchone()[0]
-        print(f"Found {total_rows} records to sync")
+        
+        # Get last processed ID
+        last_id = get_last_processed_id('articles')
+        if last_id > 0:
+            print(f"Resuming from ID: {last_id}")
+            
+        print(f"Found {total_rows} total records")
         
         # Process in smaller batches
         batch_size = 50  # Reduced from 1000 to 50
         processed = 0
         
-        while processed < total_rows:
+        while True:
             cur.execute(
-                "SELECT * FROM articles ORDER BY id LIMIT %s OFFSET %s;",
-                (batch_size, processed)
+                """
+                SELECT * FROM articles 
+                WHERE id > %s 
+                ORDER BY id 
+                LIMIT %s;
+                """,
+                (last_id, batch_size)
             )
             rows = cur.fetchall()
+            if not rows:
+                break
+                
             colnames = [desc[0] for desc in cur.description]
 
             # Process records in Neo4j batch
             with neo4j_driver.session() as session:
                 for row in rows:
-                    try:
-                        data = dict(zip(colnames, row))
-                        session.execute_write(upsert_articles_table, data)
-                        processed += 1
-                        if processed % 10 == 0:  # Show progress more frequently
-                            print(f"Progress: {processed}/{total_rows} records processed ({(processed/total_rows*100):.1f}%)")
-                    except Exception as e:
-                        print(f"Error processing record {data.get('id')}: {str(e)}")
-                        continue
+                    data = dict(zip(colnames, row))
+                    session.execute_write(upsert_articles_table, data)
+                    last_id = data['id']
+                    processed += 1
+                    if processed % 10 == 0:
+                        print(f"Progress: {processed} records processed. Current ID: {last_id}")
+                        save_checkpoint('articles', last_id)
             
-            # Show batch completion and force garbage collection
-            print(f"Completed batch: {processed}/{total_rows} records")
-            import gc
-            gc.collect()
+            # Show batch completion and save checkpoint
+            print(f"Completed batch. Last ID: {last_id}")
+            save_checkpoint('articles', last_id)
     
     print("✓ Completed syncing articles")
 
@@ -471,18 +499,32 @@ def sync_council_meeting_articles(pg_conn, neo4j_driver):
         print("\nSyncing council_meeting_articles table...")
         cur.execute("SELECT COUNT(*) FROM council_meeting_articles;")
         total_rows = cur.fetchone()[0]
-        print(f"Found {total_rows} records to sync")
         
-        # Process in larger batches
-        batch_size = 1000  # Increased from 100 to 1000
+        # Get last processed ID
+        last_id = get_last_processed_id('council_articles')
+        if last_id > 0:
+            print(f"Resuming from ID: {last_id}")
+            
+        print(f"Found {total_rows} total records")
+        
+        # Process in smaller batches
+        batch_size = 50  # Reduced from 1000 to 50
         processed = 0
         
-        while processed < total_rows:
+        while True:
             cur.execute(
-                "SELECT * FROM council_meeting_articles ORDER BY id LIMIT %s OFFSET %s;",
-                (batch_size, processed)
+                """
+                SELECT * FROM council_meeting_articles 
+                WHERE id > %s 
+                ORDER BY id 
+                LIMIT %s;
+                """,
+                (last_id, batch_size)
             )
             rows = cur.fetchall()
+            if not rows:
+                break
+                
             colnames = [desc[0] for desc in cur.description]
 
             # Process records in Neo4j batch
@@ -490,12 +532,15 @@ def sync_council_meeting_articles(pg_conn, neo4j_driver):
                 for row in rows:
                     data = dict(zip(colnames, row))
                     session.execute_write(upsert_council_article, data)
+                    last_id = data['id']
                     processed += 1
-                    if processed % 100 == 0:  # Show progress every 100 records
-                        print(f"Progress: {processed}/{total_rows} records processed ({(processed/total_rows*100):.1f}%)")
+                    if processed % 10 == 0:
+                        print(f"Progress: {processed} records processed. Current ID: {last_id}")
+                        save_checkpoint('council_articles', last_id)
             
-            # Show batch completion
-            print(f"Completed batch: {processed}/{total_rows} records")
+            # Show batch completion and save checkpoint
+            print(f"Completed batch. Last ID: {last_id}")
+            save_checkpoint('council_articles', last_id)
     
     print("✓ Completed syncing council_meeting_articles")
 
@@ -505,18 +550,32 @@ def sync_council_meeting_insights(pg_conn, neo4j_driver):
         print("\nSyncing council_meeting_insights table...")
         cur.execute("SELECT COUNT(*) FROM council_meeting_insights;")
         total_rows = cur.fetchone()[0]
-        print(f"Found {total_rows} records to sync")
         
-        # Process in larger batches
-        batch_size = 1000  # Increased from 100 to 1000
+        # Get last processed ID
+        last_id = get_last_processed_id('council_insights')
+        if last_id > 0:
+            print(f"Resuming from ID: {last_id}")
+            
+        print(f"Found {total_rows} total records")
+        
+        # Process in smaller batches
+        batch_size = 50  # Reduced from 1000 to 50
         processed = 0
         
-        while processed < total_rows:
+        while True:
             cur.execute(
-                "SELECT * FROM council_meeting_insights ORDER BY id LIMIT %s OFFSET %s;",
-                (batch_size, processed)
+                """
+                SELECT * FROM council_meeting_insights 
+                WHERE id > %s 
+                ORDER BY id 
+                LIMIT %s;
+                """,
+                (last_id, batch_size)
             )
             rows = cur.fetchall()
+            if not rows:
+                break
+                
             colnames = [desc[0] for desc in cur.description]
 
             # Process records in Neo4j batch
@@ -524,12 +583,15 @@ def sync_council_meeting_insights(pg_conn, neo4j_driver):
                 for row in rows:
                     data = dict(zip(colnames, row))
                     session.execute_write(upsert_council_insight, data)
+                    last_id = data['id']
                     processed += 1
-                    if processed % 100 == 0:  # Show progress every 100 records
-                        print(f"Progress: {processed}/{total_rows} records processed ({(processed/total_rows*100):.1f}%)")
+                    if processed % 10 == 0:
+                        print(f"Progress: {processed} records processed. Current ID: {last_id}")
+                        save_checkpoint('council_insights', last_id)
             
-            # Show batch completion
-            print(f"Completed batch: {processed}/{total_rows} records")
+            # Show batch completion and save checkpoint
+            print(f"Completed batch. Last ID: {last_id}")
+            save_checkpoint('council_insights', last_id)
     
     print("✓ Completed syncing council_meeting_insights")
 
