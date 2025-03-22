@@ -19,11 +19,21 @@ jobs:
           known_hosts: unnecessary
           if_key_exists: replace
 
-      - name: Adding Known Hosts
-        run: ssh-keyscan -H 34.219.195.94 >> ~/.ssh/known_hosts
+      - name: Setup SSH and Known Hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H 34.219.195.94 > ~/.ssh/known_hosts 2>/dev/null || true
+          chmod 600 ~/.ssh/known_hosts
+          # Add a more permissive SSH config for initial connection
+          echo -e "Host 34.219.195.94\n\tStrictHostKeyChecking no\n\tUserKnownHostsFile=/dev/null" > ~/.ssh/config
+          chmod 600 ~/.ssh/config
 
       - name: Deploy to Lightsail
         run: |
+          # Test SSH connection first
+          ssh -o "StrictHostKeyChecking=no" ec2-user@34.219.195.94 'echo "SSH connection successful"'
+          
+          # Proceed with deployment
           ssh ec2-user@34.219.195.94 'mkdir -p ~/knowledgegraph'
           rsync -av --exclude '.git' \
                     --exclude '.github' \
