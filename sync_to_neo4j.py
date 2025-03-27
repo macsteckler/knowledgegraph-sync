@@ -304,6 +304,7 @@ def upsert_council_insight(tx, row):
     # Convert any Decimal values to float
     data = convert_decimal(row)
     
+    # Create the Insight node with additional properties
     tx.run(
         """
         MERGE (i:Insight {id: $id})
@@ -313,7 +314,22 @@ def upsert_council_insight(tx, row):
             i.description = $insight_description,
             i.voteResult = $vote_result,
             i.nextSteps = $next_steps,
-            i.sentiment = $sentiment
+            i.sentiment = $sentiment,
+            i.importance = $importance,
+            i.startTime = $start_time,
+            i.endTime = $end_time,
+            i.timestamp = $timestamp,
+            i.city = $city,
+            i.createdAt = $created_at
+        ON MATCH SET
+            i.category = $category,
+            i.title = $insight_title,
+            i.description = $insight_description,
+            i.voteResult = $vote_result,
+            i.nextSteps = $next_steps,
+            i.sentiment = $sentiment,
+            i.importance = $importance,
+            i.city = $city
         """,
         id=str(data['id']),
         category=data.get('category'),
@@ -321,20 +337,144 @@ def upsert_council_insight(tx, row):
         insight_description=data.get('insight_description'),
         vote_result=data.get('vote_result'),
         next_steps=data.get('next_steps'),
-        sentiment=data.get('sentiment')
+        sentiment=data.get('sentiment'),
+        importance=data.get('importance'),
+        start_time=data.get('start_time'),
+        end_time=data.get('end_time'),
+        timestamp=data.get('timestamp'),
+        city=data.get('city'),
+        created_at=data.get('created_at')
     )
 
-    # Link to Meeting
+    # Link to Meeting (Council Video)
     if data.get('video_id'):
         tx.run(
             """
             MERGE (m:Meeting {id: $video_id})
+            ON CREATE SET
+                m.sourceType = "CouncilMeeting",
+                m.city = $city
             MERGE (i:Insight {id: $insight_id})
-            MERGE (m)-[:HAS_INSIGHT]->(i)
+            MERGE (m)-[:HAS_INSIGHT {startTime: $start_time, endTime: $end_time, timestamp: $timestamp}]->(i)
             """,
             video_id=str(data['video_id']),
+            insight_id=str(data['id']),
+            start_time=data.get('start_time'),
+            end_time=data.get('end_time'),
+            timestamp=data.get('timestamp'),
+            city=data.get('city')
+        )
+        
+        # Link city to the insight
+        tx.run(
+            """
+            MERGE (c:City {name: $city})
+            MERGE (i:Insight {id: $insight_id})
+            MERGE (i)-[:ABOUT_CITY]->(c)
+            """,
+            city=data.get('city'),
             insight_id=str(data['id'])
         )
+
+    # Process Quotes - convert from JSONB to Python objects
+    if data.get('quotes') and data['quotes']:
+        quotes = data['quotes']
+        if isinstance(quotes, str):
+            try:
+                import json
+                quotes = json.loads(quotes)
+            except:
+                quotes = []
+        
+        # If it's a list of quotes
+        if isinstance(quotes, list):
+            for idx, quote in enumerate(quotes):
+                quote_text = quote.get('text') if isinstance(quote, dict) else str(quote)
+                speaker = quote.get('speaker') if isinstance(quote, dict) else None
+                
+                # Create quote node
+                tx.run(
+                    """
+                    MERGE (q:Quote {text: $text, insightId: $insight_id, index: $idx})
+                    MERGE (i:Insight {id: $insight_id})
+                    MERGE (i)-[:HAS_QUOTE]->(q)
+                    """,
+                    text=quote_text,
+                    insight_id=str(data['id']),
+                    idx=idx
+                )
+                
+                # If speaker is identified, create person node
+                if speaker:
+                    tx.run(
+                        """
+                        MERGE (p:Person {name: $speaker})
+                        MERGE (q:Quote {text: $text, insightId: $insight_id, index: $idx})
+                        MERGE (p)-[:STATED]->(q)
+                        """,
+                        speaker=speaker,
+                        text=quote_text,
+                        insight_id=str(data['id']),
+                        idx=idx
+                    )
+    
+    # Process Entities - convert from JSONB to Python objects
+    if data.get('entities') and data['entities']:
+        entities = data['entities']
+        if isinstance(entities, str):
+            try:
+                import json
+                entities = json.loads(entities)
+            except:
+                entities = {}
+        
+        # Process entities by type (assuming structure like {organizations: [], persons: [], etc.})
+        for entity_type, entity_list in entities.items():
+            if isinstance(entity_list, list):
+                for entity_name in entity_list:
+                    # Create appropriate node type based on entity_type
+                    if entity_type.lower() in ['person', 'persons', 'people']:
+                        tx.run(
+                            """
+                            MERGE (p:Person {name: $name})
+                            MERGE (i:Insight {id: $insight_id})
+                            MERGE (i)-[:MENTIONS_ENTITY {type: 'person'}]->(p)
+                            """,
+                            name=entity_name,
+                            insight_id=str(data['id'])
+                        )
+                    elif entity_type.lower() in ['organization', 'organizations', 'org', 'orgs']:
+                        tx.run(
+                            """
+                            MERGE (o:Organization {name: $name})
+                            MERGE (i:Insight {id: $insight_id})
+                            MERGE (i)-[:MENTIONS_ENTITY {type: 'organization'}]->(o)
+                            """,
+                            name=entity_name,
+                            insight_id=str(data['id'])
+                        )
+                    elif entity_type.lower() in ['location', 'locations', 'place', 'places']:
+                        tx.run(
+                            """
+                            MERGE (l:Location {name: $name})
+                            MERGE (i:Insight {id: $insight_id})
+                            MERGE (i)-[:MENTIONS_ENTITY {type: 'location'}]->(l)
+                            """,
+                            name=entity_name,
+                            insight_id=str(data['id'])
+                        )
+                    else:
+                        # Generic entity
+                        tx.run(
+                            """
+                            MERGE (e:Entity {name: $name, type: $type})
+                            MERGE (i:Insight {id: $insight_id})
+                            MERGE (i)-[:MENTIONS_ENTITY {type: $type}]->(e)
+                            """,
+                            name=entity_name,
+                            type=entity_type.lower(),
+                            insight_id=str(data['id'])
+                        )
 
     # Key figures
     if data.get('key_figures'):
@@ -369,10 +509,117 @@ def upsert_council_insight(tx, row):
                 MERGE (t:Issue {name: $topic})
                 MERGE (i:Insight {id: $insight_id})
                 MERGE (i)-[:CONCERNS_TOPIC]->(t)
+                WITH t, i
+                MERGE (c:City {name: $city})
+                MERGE (c)-[:HAS_ISSUE]->(t)
                 """,
                 topic=topic,
-                insight_id=str(data['id'])
+                insight_id=str(data['id']),
+                city=data.get('city')
             )
+                
+
+
+def upsert_council_video(tx, row):
+    """
+    Ingest data from council_meeting_videos.
+    """
+    # Convert any Decimal values to float
+    data = convert_decimal(row)
+    
+    # Create the Meeting node
+    tx.run(
+        """
+        MERGE (m:Meeting {id: $id})
+        ON CREATE SET
+            m.youtubeUrl = $youtube_url,
+            m.title = $meeting_title,
+            m.meetingDate = $meeting_date,
+            m.duration = $video_duration,
+            m.sourceType = "CouncilMeeting",
+            m.city = $city,
+            m.youtubeVideoId = $youtube_video_id,
+            m.createdAt = $created_at
+        ON MATCH SET
+            m.youtubeUrl = $youtube_url,
+            m.title = $meeting_title,
+            m.meetingDate = $meeting_date,
+            m.duration = $video_duration,
+            m.city = $city,
+            m.youtubeVideoId = $youtube_video_id
+        """,
+        id=str(data['id']),
+        youtube_url=data.get('youtube_url'),
+        meeting_title=data.get('meeting_title'),
+        meeting_date=data.get('meeting_date'),
+        video_duration=data.get('video_duration'),
+        city=data.get('city'),
+        youtube_video_id=data.get('youtube_video_id'),
+        created_at=data.get('created_at')
+    )
+    
+    # Link city to the meeting
+    tx.run(
+        """
+        MERGE (c:City {name: $city})
+        MERGE (m:Meeting {id: $meeting_id})
+        MERGE (c)-[:HAS_MEETING]->(m)
+        """,
+        city=data.get('city'),
+        meeting_id=str(data['id'])
+    )
+
+
+def sync_council_meeting_videos(pg_conn, neo4j_driver):
+    """Fetch from council_meeting_videos."""
+    with pg_conn.cursor() as cur:
+        print("\nSyncing council_meeting_videos table...")
+        cur.execute("SELECT COUNT(*) FROM council_meeting_videos;")
+        total_rows = cur.fetchone()[0]
+        
+        # Get last processed ID
+        last_id = get_last_processed_id('council_videos')
+        if last_id > 0:
+            print(f"Resuming from ID: {last_id}")
+            
+        print(f"Found {total_rows} total records")
+        
+        # Process in smaller batches
+        batch_size = 50  # Reduced from 1000 to 50
+        processed = 0
+        
+        while True:
+            cur.execute(
+                """
+                SELECT * FROM council_meeting_videos 
+                WHERE id > %s 
+                ORDER BY id 
+                LIMIT %s;
+                """,
+                (last_id, batch_size)
+            )
+            rows = cur.fetchall()
+            if not rows:
+                break
+                
+            colnames = [desc[0] for desc in cur.description]
+
+            # Process records in Neo4j batch
+            with neo4j_driver.session() as session:
+                for row in rows:
+                    data = dict(zip(colnames, row))
+                    session.execute_write(upsert_council_video, data)
+                    last_id = data['id']
+                    processed += 1
+                    if processed % 10 == 0:
+                        print(f"Progress: {processed} records processed. Current ID: {last_id}")
+                        save_checkpoint('council_videos', last_id)
+            
+            # Show batch completion and save checkpoint
+            print(f"Completed batch. Last ID: {last_id}")
+            save_checkpoint('council_videos', last_id)
+    
+    print("✓ Completed syncing council_meeting_videos")
 
 ###################################################
 #               MAIN SYNC FUNCTIONS                #
@@ -607,6 +854,7 @@ def main():
         print("2. articles")
         print("3. council_meeting_articles")
         print("4. council_meeting_insights")
+        print("5. council_meeting_videos")
         print("Enter numbers separated by commas (e.g., '3,4' to only sync council tables)")
         print("Or press Enter to sync all tables")
         
@@ -615,7 +863,7 @@ def main():
         if choice:
             table_numbers = [int(n.strip()) for n in choice.split(',')]
         else:
-            table_numbers = [1, 2, 3, 4]
+            table_numbers = [1, 2, 3, 4, 5]
             
         # Sync selected tables
         if 1 in table_numbers:
@@ -626,6 +874,8 @@ def main():
             sync_council_meeting_articles(pg_conn, neo4j_driver)
         if 4 in table_numbers:
             sync_council_meeting_insights(pg_conn, neo4j_driver)
+        if 5 in table_numbers:
+            sync_council_meeting_videos(pg_conn, neo4j_driver)
 
         print("\nSync completed successfully! 🎉")
 

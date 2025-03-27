@@ -49,7 +49,7 @@ def sync_recent_news_articles(pg_conn, neo4j_driver, hours=24):
         cur.execute("""
             SELECT COUNT(*) 
             FROM news_articles 
-            WHERE created_at >= %s
+            WHERE date >= %s
             """, (cutoff_time,))
         total_rows = cur.fetchone()[0]
         print(f"Found {total_rows} new records to sync")
@@ -65,7 +65,7 @@ def sync_recent_news_articles(pg_conn, neo4j_driver, hours=24):
             cur.execute("""
                 SELECT * 
                 FROM news_articles 
-                WHERE created_at >= %s
+                WHERE date >= %s
                 ORDER BY id 
                 LIMIT %s OFFSET %s
                 """, (cutoff_time, batch_size, processed))
@@ -93,7 +93,7 @@ def sync_recent_articles(pg_conn, neo4j_driver, hours=24):
         cur.execute("""
             SELECT COUNT(*) 
             FROM articles 
-            WHERE created_at >= %s
+            WHERE processed_at >= %s
             """, (cutoff_time,))
         total_rows = cur.fetchone()[0]
         print(f"Found {total_rows} new records to sync")
@@ -109,7 +109,7 @@ def sync_recent_articles(pg_conn, neo4j_driver, hours=24):
             cur.execute("""
                 SELECT * 
                 FROM articles 
-                WHERE created_at >= %s
+                WHERE processed_at >= %s
                 ORDER BY id 
                 LIMIT %s OFFSET %s
                 """, (cutoff_time, batch_size, processed))
@@ -216,6 +216,50 @@ def sync_recent_council_insights(pg_conn, neo4j_driver, hours=24):
     
     print("✓ Completed syncing recent council_meeting_insights")
 
+def sync_recent_council_videos(pg_conn, neo4j_driver, hours=24):
+    """Sync council meeting videos from the last X hours"""
+    with pg_conn.cursor() as cur:
+        cutoff_time = datetime.now() - timedelta(hours=hours)
+        
+        print(f"\nSyncing council_meeting_videos from the last {hours} hours...")
+        cur.execute("""
+            SELECT COUNT(*) 
+            FROM council_meeting_videos 
+            WHERE created_at >= %s
+            """, (cutoff_time,))
+        total_rows = cur.fetchone()[0]
+        print(f"Found {total_rows} new records to sync")
+        
+        if total_rows == 0:
+            return
+        
+        # Process in batches
+        batch_size = 100
+        processed = 0
+        
+        while processed < total_rows:
+            cur.execute("""
+                SELECT * 
+                FROM council_meeting_videos 
+                WHERE created_at >= %s
+                ORDER BY id 
+                LIMIT %s OFFSET %s
+                """, (cutoff_time, batch_size, processed))
+            rows = cur.fetchall()
+            colnames = [desc[0] for desc in cur.description]
+
+            with neo4j_driver.session() as session:
+                for row in rows:
+                    data = dict(zip(colnames, row))
+                    session.execute_write(upsert_council_video, data)
+                    processed += 1
+                    if processed % 10 == 0:
+                        print(f"Progress: {processed}/{total_rows} records processed ({(processed/total_rows*100):.1f}%)")
+            
+            print(f"Completed batch: {processed}/{total_rows} records")
+    
+    print("✓ Completed syncing recent council_meeting_videos")
+
 def main():
     try:
         # Get connections
@@ -227,6 +271,7 @@ def main():
         sync_recent_articles(pg_conn, neo4j_driver)
         sync_recent_council_articles(pg_conn, neo4j_driver)
         sync_recent_council_insights(pg_conn, neo4j_driver)
+        sync_recent_council_videos(pg_conn, neo4j_driver)
 
         print("\nDaily sync completed successfully! 🎉")
 
@@ -238,6 +283,15 @@ def main():
             pg_conn.close()
         if 'neo4j_driver' in locals():
             neo4j_driver.close()
+
+# Import the upsert functions
+from sync_to_neo4j import (
+    upsert_news_article,
+    upsert_articles_table,
+    upsert_council_article,
+    upsert_council_insight,
+    upsert_council_video
+)
 
 if __name__ == "__main__":
     main() 

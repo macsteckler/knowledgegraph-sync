@@ -229,13 +229,60 @@ def sync_council_insights_timeframe(pg_conn, neo4j_driver, start_date, end_date)
     
     print("✓ Completed syncing council_meeting_insights")
 
+def sync_council_videos_timeframe(pg_conn, neo4j_driver, start_date, end_date):
+    """Sync council meeting videos from a specific time frame"""
+    with pg_conn.cursor() as cur:
+        print(f"\nSyncing council_meeting_videos from {start_date} to {end_date}...")
+        cur.execute("""
+            SELECT COUNT(*) 
+            FROM council_meeting_videos 
+            WHERE created_at >= %s AND created_at <= %s
+            """, (start_date, end_date))
+        total_rows = cur.fetchone()[0]
+        print(f"Found {total_rows} records to sync")
+        
+        if total_rows == 0:
+            return
+        
+        # Process in batches
+        batch_size = 50
+        processed = 0
+        last_id = 0
+        
+        while processed < total_rows:
+            cur.execute("""
+                SELECT * 
+                FROM council_meeting_videos 
+                WHERE created_at >= %s AND created_at <= %s AND id > %s
+                ORDER BY id 
+                LIMIT %s
+                """, (start_date, end_date, last_id, batch_size))
+            rows = cur.fetchall()
+            if not rows:
+                break
+                
+            colnames = [desc[0] for desc in cur.description]
+
+            with neo4j_driver.session() as session:
+                for row in rows:
+                    data = dict(zip(colnames, row))
+                    last_id = data['id']
+                    session.execute_write(upsert_council_video, data)
+                    processed += 1
+                    if processed % 10 == 0:
+                        print(f"Progress: {processed}/{total_rows} records processed ({(processed/total_rows*100):.1f}%)")
+            
+            print(f"Completed batch: {processed}/{total_rows} records")
+    
+    print("✓ Completed syncing council_meeting_videos")
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Sync data within a specific time frame')
     parser.add_argument('--start', required=True, help='Start date (YYYY-MM-DD)')
     parser.add_argument('--end', default=datetime.now().strftime('%Y-%m-%d'), 
                         help='End date (YYYY-MM-DD), defaults to today')
     parser.add_argument('--table', choices=['all', 'news_articles', 'articles', 
-                                           'council_articles', 'council_insights'],
+                                           'council_articles', 'council_insights', 'council_videos'],
                        default='all', help='Which table to sync (default: all)')
     
     return parser.parse_args()
@@ -267,6 +314,9 @@ def main():
             
         if args.table in ['all', 'council_insights']:
             sync_council_insights_timeframe(pg_conn, neo4j_driver, start_date, end_date)
+            
+        if args.table in ['all', 'council_videos']:
+            sync_council_videos_timeframe(pg_conn, neo4j_driver, start_date, end_date)
 
         print("\nTimeframe sync completed successfully! 🎉")
 
@@ -284,7 +334,8 @@ from sync_to_neo4j import (
     upsert_news_article,
     upsert_articles_table,
     upsert_council_article,
-    upsert_council_insight
+    upsert_council_insight,
+    upsert_council_video
 )
 
 if __name__ == "__main__":
