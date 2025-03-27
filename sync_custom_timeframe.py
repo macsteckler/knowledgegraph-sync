@@ -48,7 +48,7 @@ def sync_news_articles_timeframe(pg_conn, neo4j_driver, start_date, end_date):
         cur.execute("""
             SELECT COUNT(*) 
             FROM news_articles 
-            WHERE created_at >= %s AND created_at <= %s
+            WHERE date >= %s AND date <= %s
             """, (start_date, end_date))
         total_rows = cur.fetchone()[0]
         print(f"Found {total_rows} records to sync")
@@ -65,7 +65,7 @@ def sync_news_articles_timeframe(pg_conn, neo4j_driver, start_date, end_date):
             cur.execute("""
                 SELECT * 
                 FROM news_articles 
-                WHERE created_at >= %s AND created_at <= %s AND id > %s
+                WHERE date >= %s AND date <= %s AND id > %s
                 ORDER BY id 
                 LIMIT %s
                 """, (start_date, end_date, last_id, batch_size))
@@ -95,7 +95,7 @@ def sync_articles_timeframe(pg_conn, neo4j_driver, start_date, end_date):
         cur.execute("""
             SELECT COUNT(*) 
             FROM articles 
-            WHERE created_at >= %s AND created_at <= %s
+            WHERE processed_at >= %s AND processed_at <= %s
             """, (start_date, end_date))
         total_rows = cur.fetchone()[0]
         print(f"Found {total_rows} records to sync")
@@ -112,7 +112,7 @@ def sync_articles_timeframe(pg_conn, neo4j_driver, start_date, end_date):
             cur.execute("""
                 SELECT * 
                 FROM articles 
-                WHERE created_at >= %s AND created_at <= %s AND id > %s
+                WHERE processed_at >= %s AND processed_at <= %s AND id > %s
                 ORDER BY id 
                 LIMIT %s
                 """, (start_date, end_date, last_id, batch_size))
