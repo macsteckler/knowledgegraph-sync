@@ -389,9 +389,18 @@ def upsert_council_insight(tx, row):
         # If it's a list of quotes
         if isinstance(quotes, list):
             for idx, quote in enumerate(quotes):
-                quote_text = quote.get('text') if isinstance(quote, dict) else str(quote)
-                speaker = quote.get('speaker') if isinstance(quote, dict) else None
+                # Handle different quote formats
+                if isinstance(quote, dict):
+                    quote_text = quote.get('quote') or quote.get('text')
+                    speaker = quote.get('speaker')
+                else:
+                    quote_text = str(quote) if quote else None
+                    speaker = None
                 
+                # Skip quotes with null text
+                if not quote_text:
+                    continue
+                    
                 # Create quote node
                 tx.run(
                     """
