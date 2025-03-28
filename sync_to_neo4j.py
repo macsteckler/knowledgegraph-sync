@@ -348,6 +348,7 @@ def upsert_council_insight(tx, row):
 
     # Link to Meeting (Council Video)
     if data.get('video_id'):
+        # First create the relationship without any properties
         tx.run(
             """
             MERGE (m:Meeting {id: $video_id})
@@ -355,15 +356,31 @@ def upsert_council_insight(tx, row):
                 m.sourceType = "CouncilMeeting",
                 m.city = $city
             MERGE (i:Insight {id: $insight_id})
-            MERGE (m)-[:HAS_INSIGHT {startTime: $start_time, endTime: $end_time, timestamp: $timestamp}]->(i)
+            MERGE (m)-[:HAS_INSIGHT]->(i)
             """,
             video_id=str(data['video_id']),
             insight_id=str(data['id']),
-            start_time=data.get('start_time'),
-            end_time=data.get('end_time'),
-            timestamp=data.get('timestamp'),
             city=data.get('city')
         )
+        
+        # Then set properties on the relationship if they exist
+        if data.get('start_time') or data.get('end_time') or data.get('timestamp'):
+            props = {}
+            if data.get('start_time') is not None:
+                props['startTime'] = data.get('start_time')
+            if data.get('end_time') is not None:
+                props['endTime'] = data.get('end_time')
+            if data.get('timestamp') is not None:
+                props['timestamp'] = data.get('timestamp')
+                
+            # Only set properties if we have some
+            if props:
+                props_string = ", ".join(f"r.{key} = ${key}" for key in props.keys())
+                query = f"""
+                MATCH (m:Meeting {{id: $video_id}})-[r:HAS_INSIGHT]->(i:Insight {{id: $insight_id}})
+                SET {props_string}
+                """
+                tx.run(query, video_id=str(data['video_id']), insight_id=str(data['id']), **props)
         
         # Link city to the insight
         tx.run(
