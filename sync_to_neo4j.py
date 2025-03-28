@@ -577,10 +577,16 @@ def sync_council_meeting_videos(pg_conn, neo4j_driver):
         cur.execute("SELECT COUNT(*) FROM council_meeting_videos;")
         total_rows = cur.fetchone()[0]
         
-        # Get last processed ID
-        last_id = get_last_processed_id('council_videos')
-        if last_id > 0:
-            print(f"Resuming from ID: {last_id}")
+        # Get last processed ID - for UUIDs we start with empty string
+        last_id = ""
+        checkpoint_file = 'council_videos_checkpoint.txt'
+        if os.path.exists(checkpoint_file):
+            try:
+                with open(checkpoint_file, 'r') as f:
+                    last_id = f.read().strip()
+                print(f"Resuming from UUID: {last_id}")
+            except:
+                last_id = ""
             
         print(f"Found {total_rows} total records")
         
@@ -592,8 +598,8 @@ def sync_council_meeting_videos(pg_conn, neo4j_driver):
             cur.execute(
                 """
                 SELECT * FROM council_meeting_videos 
-                WHERE id > %s 
-                ORDER BY id 
+                WHERE id::text > %s 
+                ORDER BY id::text 
                 LIMIT %s;
                 """,
                 (last_id, batch_size)
@@ -609,15 +615,19 @@ def sync_council_meeting_videos(pg_conn, neo4j_driver):
                 for row in rows:
                     data = dict(zip(colnames, row))
                     session.execute_write(upsert_council_video, data)
-                    last_id = data['id']
+                    last_id = str(data['id'])  # Convert UUID to string
                     processed += 1
                     if processed % 10 == 0:
-                        print(f"Progress: {processed} records processed. Current ID: {last_id}")
-                        save_checkpoint('council_videos', last_id)
+                        print(f"Progress: {processed} records processed. Current UUID: {last_id}")
+                        # Save UUID checkpoint
+                        with open(checkpoint_file, 'w') as f:
+                            f.write(str(last_id))
             
             # Show batch completion and save checkpoint
-            print(f"Completed batch. Last ID: {last_id}")
-            save_checkpoint('council_videos', last_id)
+            print(f"Completed batch. Last UUID: {last_id}")
+            # Save UUID checkpoint
+            with open(checkpoint_file, 'w') as f:
+                f.write(str(last_id))
     
     print("✓ Completed syncing council_meeting_videos")
 
